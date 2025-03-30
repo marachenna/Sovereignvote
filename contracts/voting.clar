@@ -1,6 +1,9 @@
 ;; SovereignVote: Decentralized Identity and Voting System
 ;; A smart contract that combines secure identity management with voting capabilities
 
+;; CivicLink: Decentralized Governance and Identity System
+;; A smart contract that combines secure identity management with governance capabilities
+
 ;; Constants
 (define-constant governance-admin tx-sender)
 (define-constant err-admin-only (err u100))
@@ -94,7 +97,7 @@
       {
         verified-status: true,
         auth-hash: auth-hash,
-        onboarding-time: stacks-block-height
+        onboarding-time: block-height
       }
     ))
   )
@@ -118,7 +121,7 @@
         details: details,
         support-count: u0,
         oppose-count: u0,
-        conclusion-block: (+ stacks-block-height duration),
+        conclusion-block: (+ block-height duration),
         total-participants: u0
       }
     )
@@ -136,7 +139,7 @@
       (current-total-participants (get total-participants decision))
     )
     (asserts! (is-authorized tx-sender) err-not-authorized)
-    (asserts! (< stacks-block-height (get conclusion-block decision)) err-participation-closed)
+    (asserts! (< block-height (get conclusion-block decision)) err-participation-closed)
     (asserts! (not (default-to false (map-get? participations participation-key))) err-already-participated)
     
     (map-set participations participation-key true)
