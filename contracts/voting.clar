@@ -2,158 +2,158 @@
 ;; A smart contract that combines secure identity management with voting capabilities
 
 ;; Constants
-(define-constant contract-owner tx-sender)
-(define-constant err-owner-only (err u100))
-(define-constant err-not-registered (err u101))
-(define-constant err-already-registered (err u102))
-(define-constant err-already-voted (err u103))
-(define-constant err-invalid-proposal (err u104))
-(define-constant err-voting-closed (err u105))
+(define-constant governance-admin tx-sender)
+(define-constant err-admin-only (err u100))
+(define-constant err-not-authorized (err u101))
+(define-constant err-already-authorized (err u102))
+(define-constant err-already-participated (err u103))
+(define-constant err-invalid-decision (err u104))
+(define-constant err-participation-closed (err u105))
 (define-constant err-insufficient-funds (err u106))
 (define-constant err-invalid-input (err u107))
 
 ;; Data Variables
-(define-data-var voting-open bool false)
-(define-data-var current-proposal-id uint u0)
-(define-data-var registration-fee uint u1000000) ;; 1 STX registration fee
+(define-data-var participation-open bool false)
+(define-data-var current-decision-id uint u0)
+(define-data-var authorization-fee uint u1000000) ;; 1 STX authorization fee
 
 ;; Data Maps
-(define-map user-registry
+(define-map citizen-profiles
   principal
   {
-    kyc-status: bool,
-    identity-hash: (string-utf8 64),
-    registration-time: uint
+    verified-status: bool,
+    auth-hash: (string-utf8 64),
+    onboarding-time: uint
   }
 )
 
-(define-map voting-proposals
+(define-map decisions
   uint
   {
-    title: (string-utf8 100),
-    description: (string-utf8 500),
-    vote-count-yes: uint,
-    vote-count-no: uint,
-    end-block: uint,
-    total-votes: uint
+    name: (string-utf8 100),
+    details: (string-utf8 500),
+    support-count: uint,
+    oppose-count: uint,
+    conclusion-block: uint,
+    total-participants: uint
   }
 )
 
-(define-map vote-records
-  {proposal-id: uint, voter: principal}
+(define-map participations
+  {decision-id: uint, participant: principal}
   bool
 )
 
 ;; Private Functions
-(define-private (is-registered (user principal))
-  (default-to false (get kyc-status (map-get? user-registry user)))
+(define-private (is-authorized (user principal))
+  (default-to false (get verified-status (map-get? citizen-profiles user)))
 )
 
-(define-private (check-owner)
-  (ok (asserts! (is-eq tx-sender contract-owner) err-owner-only))
+(define-private (check-admin)
+  (ok (asserts! (is-eq tx-sender governance-admin) err-admin-only))
 )
 
 ;; Input Validation Functions
-(define-private (validate-identity-hash (hash (string-utf8 64)))
+(define-private (validate-auth-hash (hash (string-utf8 64)))
   (and 
     (> (len hash) u0)
     (<= (len hash) u64)
   )
 )
 
-(define-private (validate-proposal-input 
-  (title (string-utf8 100)) 
-  (description (string-utf8 500))
+(define-private (validate-decision-input 
+  (name (string-utf8 100)) 
+  (details (string-utf8 500))
   (duration uint)
 )
   (and
-    (> (len title) u0)
-    (<= (len title) u100)
-    (> (len description) u0)
-    (<= (len description) u500)
+    (> (len name) u0)
+    (<= (len name) u100)
+    (> (len details) u0)
+    (<= (len details) u500)
     (> duration u0)
     (<= duration u52560) ;; Max 1 year in blocks
   )
 )
 
 ;; Public Functions
-(define-public (register-user (identity-hash (string-utf8 64)))
+(define-public (create-profile (auth-hash (string-utf8 64)))
   (let 
     (
-      (fee (var-get registration-fee))
+      (fee (var-get authorization-fee))
     )
-    (asserts! (validate-identity-hash identity-hash) err-invalid-input)
-    (asserts! (not (is-registered tx-sender)) err-already-registered)
+    (asserts! (validate-auth-hash auth-hash) err-invalid-input)
+    (asserts! (not (is-authorized tx-sender)) err-already-authorized)
     (asserts! (>= (stx-get-balance tx-sender) fee) err-insufficient-funds)
     
-    ;; Transfer registration fee to contract owner
-    (try! (stx-transfer? fee tx-sender contract-owner))
+    ;; Transfer authorization fee to contract admin
+    (try! (stx-transfer? fee tx-sender governance-admin))
     
-    (ok (map-set user-registry
+    (ok (map-set citizen-profiles
       tx-sender
       {
-        kyc-status: true,
-        identity-hash: identity-hash,
-        registration-time: stacks-block-height
+        verified-status: true,
+        auth-hash: auth-hash,
+        onboarding-time: stacks-block-height
       }
     ))
   )
 )
 
-(define-public (create-voting-proposal 
-  (title (string-utf8 100)) 
-  (description (string-utf8 500)) 
+(define-public (propose-decision 
+  (name (string-utf8 100)) 
+  (details (string-utf8 500)) 
   (duration uint)
 )
   (let
     (
-      (proposal-id (+ (var-get current-proposal-id) u1))
+      (decision-id (+ (var-get current-decision-id) u1))
     )
-    (asserts! (validate-proposal-input title description duration) err-invalid-input)
-    (try! (check-owner))
-    (map-set voting-proposals
-      proposal-id
+    (asserts! (validate-decision-input name details duration) err-invalid-input)
+    (try! (check-admin))
+    (map-set decisions
+      decision-id
       {
-        title: title,
-        description: description,
-        vote-count-yes: u0,
-        vote-count-no: u0,
-        end-block: (+ stacks-block-height duration),
-        total-votes: u0
+        name: name,
+        details: details,
+        support-count: u0,
+        oppose-count: u0,
+        conclusion-block: (+ stacks-block-height duration),
+        total-participants: u0
       }
     )
-    (var-set current-proposal-id proposal-id)
-    (var-set voting-open true)
-    (ok proposal-id)
+    (var-set current-decision-id decision-id)
+    (var-set participation-open true)
+    (ok decision-id)
   )
 )
 
-(define-public (submit-vote (proposal-id uint) (vote bool))
+(define-public (submit-opinion (decision-id uint) (support bool))
   (let
     (
-      (proposal (unwrap! (map-get? voting-proposals proposal-id) err-invalid-proposal))
-      (vote-key {proposal-id: proposal-id, voter: tx-sender})
-      (current-total-votes (get total-votes proposal))
+      (decision (unwrap! (map-get? decisions decision-id) err-invalid-decision))
+      (participation-key {decision-id: decision-id, participant: tx-sender})
+      (current-total-participants (get total-participants decision))
     )
-    (asserts! (is-registered tx-sender) err-not-registered)
-    (asserts! (< stacks-block-height (get end-block proposal)) err-voting-closed)
-    (asserts! (not (default-to false (map-get? vote-records vote-key))) err-already-voted)
+    (asserts! (is-authorized tx-sender) err-not-authorized)
+    (asserts! (< stacks-block-height (get conclusion-block decision)) err-participation-closed)
+    (asserts! (not (default-to false (map-get? participations participation-key))) err-already-participated)
     
-    (map-set vote-records vote-key true)
-    (if vote
-      (map-set voting-proposals proposal-id 
-        (merge proposal 
+    (map-set participations participation-key true)
+    (if support
+      (map-set decisions decision-id 
+        (merge decision 
           {
-            vote-count-yes: (+ (get vote-count-yes proposal) u1),
-            total-votes: (+ current-total-votes u1)
+            support-count: (+ (get support-count decision) u1),
+            total-participants: (+ current-total-participants u1)
           }
         )
       )
-      (map-set voting-proposals proposal-id 
-        (merge proposal 
+      (map-set decisions decision-id 
+        (merge decision 
           {
-            vote-count-no: (+ (get vote-count-no proposal) u1),
-            total-votes: (+ current-total-votes u1)
+            oppose-count: (+ (get oppose-count decision) u1),
+            total-participants: (+ current-total-participants u1)
           }
         )
       )
@@ -163,32 +163,32 @@
 )
 
 ;; Administrative Functions
-(define-public (update-registration-fee (new-fee uint))
+(define-public (update-authorization-fee (new-fee uint))
   (begin
-    (try! (check-owner))
+    (try! (check-admin))
     (asserts! (> new-fee u0) err-invalid-input)
-    (var-set registration-fee new-fee)
+    (var-set authorization-fee new-fee)
     (ok true)
   )
 )
 
 ;; Read-Only Functions
-(define-read-only (get-proposal (proposal-id uint))
-  (map-get? voting-proposals proposal-id)
+(define-read-only (get-decision (decision-id uint))
+  (map-get? decisions decision-id)
 )
 
-(define-read-only (get-user-info (user principal))
-  (map-get? user-registry user)
+(define-read-only (get-citizen-profile (user principal))
+  (map-get? citizen-profiles user)
 )
 
-(define-read-only (user-has-voted (proposal-id uint) (user principal))
-  (default-to false (map-get? vote-records {proposal-id: proposal-id, voter: user}))
+(define-read-only (has-participated (decision-id uint) (user principal))
+  (default-to false (map-get? participations {decision-id: decision-id, participant: user}))
 )
 
-(define-read-only (get-vote-results (proposal-id uint))
-  (map-get? voting-proposals proposal-id)
+(define-read-only (get-decision-results (decision-id uint))
+  (map-get? decisions decision-id)
 )
 
-(define-read-only (get-registration-fee)
-  (var-get registration-fee)
+(define-read-only (get-authorization-fee)
+  (var-get authorization-fee)
 )
